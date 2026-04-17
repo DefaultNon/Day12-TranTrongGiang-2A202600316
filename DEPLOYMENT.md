@@ -1,7 +1,7 @@
 # Thông tin Triển khai 
 
 ## URL Công khai (Public URL)
-https://day12-trantronggiang-production.up.railway.app
+https://day12-trantronggiang-2a202600316-production.up.railway.app
 
 ## Nền tảng
 Railway
@@ -10,13 +10,13 @@ Railway
 
 ### Kiểm tra tính khả dụng (Health Check)
 ```bash
-curl https://day12-trantronggiang-production.up.railway.app/health
+curl https://day12-trantronggiang-2a202600316-production.up.railway.app/health
 # Kết quả mong đợi: {"status": "ok", ...}
 ```
 
 ### Kiểm tra API Agent (Yêu cầu xác thực)
 ```bash
-curl -X POST https://day12-trantronggiang-production.up.railway.app/ask \
+curl -X POST https://day12-trantronggiang-2a202600316-production.up.railway.app/ask \
   -H "X-API-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{"question": "Xin chào, hôm nay bạn thế nào?"}'
