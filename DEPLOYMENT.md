@@ -26,6 +26,7 @@ curl -X POST https://day12-trantronggiang-production.up.railway.app/ask \
 - `PORT` (Được Railway tự động điều phối cổng)
 - `REDIS_URL` (Sử dụng liên kết tới dịch vụ external Redis trên Railway)
 - `AGENT_API_KEY` (Khóa dùng để xác thực request bên ngoài truyền vào Hệ Thống)
+- `JWT_SECRET` (Khóa bí mật dùng để mã hóa session hoặc token theo yêu cầu code Production)
 - `OPENAI_API_KEY` (Khóa API OpenAI để logic AI Agent xử trí)
 - `ENVIRONMENT` (Bật flag "production")
 
