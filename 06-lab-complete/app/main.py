@@ -23,6 +23,8 @@ from datetime import datetime, timezone
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 
+import redis
+from redis.exceptions import RedisError, ConnectionError as RedisConnectionError
 from fastapi import FastAPI, HTTPException, Security, Depends, Request, Response
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,13 +50,56 @@ _is_ready = False
 _request_count = 0
 _error_count = 0
 
+# Redis client
+redis_client: redis.Redis = None
+_redis_available = False
+
+def check_redis():
+    """Check if Redis is available and initialize if needed."""
+    global redis_client, _redis_available
+    if not settings.redis_url:
+        _redis_available = False
+        return False
+    
+    try:
+        if redis_client is None:
+            redis_client = redis.from_url(settings.redis_url, decode_responses=True, socket_timeout=2)
+        redis_client.ping()
+        _redis_available = True
+        return True
+    except (RedisError, RedisConnectionError):
+        if _redis_available:
+            logger.warning("Redis connection lost, falling back to in-memory storage")
+        _redis_available = False
+        return False
+
 # ─────────────────────────────────────────────────────────
-# Simple In-memory Rate Limiter
+# Rate Limiter (Redis with In-memory Fallback)
 # ─────────────────────────────────────────────────────────
 _rate_windows: dict[str, deque] = defaultdict(deque)
 
 def check_rate_limit(key: str):
     now = time.time()
+    
+    # Try Redis first
+    if check_redis():
+        try:
+            redis_key = f"rl:{key}"
+            count = redis_client.incr(redis_key)
+            if count == 1:
+                redis_client.expire(redis_key, 60)
+            
+            if count > settings.rate_limit_per_minute:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Rate limit exceeded: {settings.rate_limit_per_minute} req/min",
+                    headers={"Retry-After": "60"},
+                )
+            return
+        except (RedisError, RedisConnectionError) as e:
+            logger.error(f"Redis rate limit error: {e}, falling back to in-memory")
+
+    # In-memory Fallback
     window = _rate_windows[key]
     while window and window[0] < now - 60:
         window.popleft()
@@ -67,7 +112,7 @@ def check_rate_limit(key: str):
     window.append(now)
 
 # ─────────────────────────────────────────────────────────
-# Simple Cost Guard
+# Cost Guard (Redis with In-memory Fallback)
 # ─────────────────────────────────────────────────────────
 _daily_cost = 0.0
 _cost_reset_day = time.strftime("%Y-%m-%d")
@@ -75,12 +120,32 @@ _cost_reset_day = time.strftime("%Y-%m-%d")
 def check_and_record_cost(input_tokens: int, output_tokens: int):
     global _daily_cost, _cost_reset_day
     today = time.strftime("%Y-%m-%d")
+    cost = (input_tokens / 1000) * 0.00015 + (output_tokens / 1000) * 0.0006
+    
+    # Try Redis first
+    if check_redis():
+        try:
+            cost_key = f"cost:{today}"
+            current_cost = redis_client.get(cost_key)
+            current_cost_val = float(current_cost) if current_cost else 0.0
+            
+            if current_cost_val >= settings.daily_budget_usd:
+                raise HTTPException(503, "Daily budget exhausted. Try tomorrow.")
+            
+            # Increment and set TTL (24h)
+            new_cost = redis_client.incrbyfloat(cost_key, cost)
+            if current_cost is None:
+                redis_client.expire(cost_key, 86400)
+            return
+        except (RedisError, RedisConnectionError) as e:
+            logger.error(f"Redis cost guard error: {e}, falling back to in-memory")
+
+    # In-memory Fallback
     if today != _cost_reset_day:
         _daily_cost = 0.0
         _cost_reset_day = today
     if _daily_cost >= settings.daily_budget_usd:
         raise HTTPException(503, "Daily budget exhausted. Try tomorrow.")
-    cost = (input_tokens / 1000) * 0.00015 + (output_tokens / 1000) * 0.0006
     _daily_cost += cost
 
 # ─────────────────────────────────────────────────────────
@@ -109,6 +174,7 @@ async def lifespan(app: FastAPI):
         "environment": settings.environment,
     }))
     time.sleep(0.1)  # simulate init
+    check_redis()
     _is_ready = True
     logger.info(json.dumps({"event": "ready"}))
 
@@ -231,7 +297,10 @@ async def ask_agent(
 def health():
     """Liveness probe. Platform restarts container if this fails."""
     status = "ok"
-    checks = {"llm": "mock" if not settings.openai_api_key else "openai"}
+    checks = {
+        "llm": "mock" if not settings.openai_api_key else "openai",
+        "redis": "connected" if _redis_available else "offline (using fallback)"
+    }
     return {
         "status": status,
         "version": settings.app_version,
@@ -259,6 +328,7 @@ def metrics(_key: str = Depends(verify_api_key)):
         "total_requests": _request_count,
         "error_count": _error_count,
         "daily_cost_usd": round(_daily_cost, 4),
+        "redis_available": _redis_available,
         "daily_budget_usd": settings.daily_budget_usd,
         "budget_used_pct": round(_daily_cost / settings.daily_budget_usd * 100, 1),
     }
