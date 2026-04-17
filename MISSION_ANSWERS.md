@@ -31,7 +31,7 @@
 ## Phần 3: Triển khai Đám mây (Cloud Deployment)
 
 ### Bài tập 3.1: Triển khai trên Railway
-- URL: `https://day12-trantronggiang-production.up.railway.app`
+- URL: `https://day12-trantronggiang-2a202600316-production.up.railway.app`
 - Ảnh chụp màn hình: `[Đã lưu trong thư mục screenshots]`
 
 ## Phần 4: Bảo mật API
